@@ -8,7 +8,7 @@ import React, {
 } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import type { AuthUser, UserRole } from '../types/api';
-import { loginRequest } from '../services/api';
+import { loginRequest, setApiToken } from '../services/api';
 
 const TOKEN_KEY = 'billing_jwt';
 const USER_KEY = 'billing_user';
@@ -44,6 +44,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ]);
         if (t && u && r) {
           setToken(t);
+          setApiToken(t);
           setUser(JSON.parse(u) as AuthUser);
           setRole(r as UserRole);
         }
@@ -67,6 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.setItemAsync(USER_KEY, JSON.stringify(res.data));
     await SecureStore.setItemAsync(ROLE_KEY, res.role);
     setToken(sessionToken);
+    setApiToken(sessionToken);
     setUser(res.data);
     setRole(res.role);
     return { ok: true };
@@ -77,6 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.deleteItemAsync(USER_KEY);
     await SecureStore.deleteItemAsync(ROLE_KEY);
     setToken(null);
+    setApiToken(null);
     setUser(null);
     setRole(null);
   }, []);

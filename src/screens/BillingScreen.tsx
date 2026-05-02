@@ -11,6 +11,7 @@ import {
   Alert,
   Pressable,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Plus, Trash2, ShoppingBag, Search, Minus } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -25,19 +26,26 @@ type Product = {
   price: string;
   stock: string;
   gst_percentage: string;
+  unit?: string;
 };
 
 type Line = { product: Product; qty: number };
 
 export default function BillingScreen() {
   const { token, user } = useAuth();
+  const navigation = useNavigation();
   const [products, setProducts] = useState<Product[]>([]);
   const [lines, setLines] = useState<Line[]>([]);
   const [customer_name, setCustomerName] = useState('');
   const [customer_phone, setCustomerPhone] = useState('');
+  const [customer_gst_no, setCustomerGstNo] = useState('');
+  const [billType, setBillType] = useState<'cash_bill' | 'gst_bill'>('cash_bill');
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'online' | 'upi' | 'credit'>('cash');
+  const [paid_amount, setPaidAmount] = useState('');
   const [picker, setPicker] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedProducts, setSelectedProducts] = useState<Record<number, { product: Product; qty: number }>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const loadProducts = useCallback(async () => {
     if (!token || !user?.company_id) {
@@ -98,11 +106,13 @@ export default function BillingScreen() {
       const g = parseFloat(l.product.gst_percentage) || 0;
       const lineSub = p * l.qty;
       sub += lineSub;
-      gst += lineSub * (g / 100);
+      if (billType === 'gst_bill') {
+        gst += lineSub * (g / 100);
+      }
     }
     const total = sub + gst;
     return { sub_total: sub, gst_total: gst, total_amount: total };
-  }, [lines]);
+  }, [lines, billType]);
 
   const filteredProducts = useMemo(() => {
     if (!searchQuery.trim()) return products;
@@ -192,16 +202,55 @@ export default function BillingScreen() {
     setPicker(false);
   };
 
+  const saveOrGetCustomer = async () => {
+    if (!user?.company_id) return null;
+
+    // Sanitize phone to exactly 10 digits
+    const cleanPhone = customer_phone.replace(/\D/g, '').slice(-10);
+
+    const payload = {
+      company_id: Number(user.company_id),
+      name: customer_name.trim(),
+      phone: cleanPhone,
+      gst_no: billType === 'gst_bill' && customer_gst_no.trim() ? customer_gst_no.trim() : null,  // Send null if empty
+    };
+
+    console.log("FINAL PAYLOAD (Customer Save):", JSON.stringify(payload, null, 2));
+
+    const res = await apiFetch<{ status: boolean; customer_id?: number; message?: string }>('customer/customer_save.php', {
+      method: 'POST',
+      body: payload,
+      token,
+    });
+
+    console.log("Customer Response:", res);
+
+    if (res.status && res.customer_id) {
+      return res.customer_id;
+    }
+    throw new Error(res.message || 'Failed to save customer');
+  };
+
   const submit = async () => {
+    if (isSubmitting) return;
     if (!token || !user?.company_id) {
       return;
     }
-    if (!/^[0-9]{10}$/.test(customer_phone.trim())) {
-      Alert.alert('Validation', 'Customer phone must be 10 digits');
+    const cleanPhone = customer_phone.replace(/\D/g, '').slice(-10);
+    if (cleanPhone.length !== 10) {
+      Alert.alert('Validation', 'Customer phone must be exactly 10 digits');
       return;
     }
     if (!customer_name.trim() || lines.length === 0) {
       Alert.alert('Validation', 'Customer name and at least one product required');
+      return;
+    }
+    if (billType === 'gst_bill' && !customer_gst_no.trim()) {
+      Alert.alert('Validation', 'GST number is required for GST bill');
+      return;
+    }
+    if (paymentMethod !== 'credit' && (parseFloat(paid_amount) || 0) <= 0) {
+      Alert.alert('Validation', 'Enter received amount');
       return;
     }
 
@@ -209,39 +258,132 @@ export default function BillingScreen() {
     for (const l of lines) {
       const availableStock = parseFloat(l.product.stock) || 0;
       if (l.qty > availableStock) {
-        Alert.alert('Stock not available', 'One or more items exceed available stock');
+        Alert.alert('Stock not available', `Item "${l.product.product_name}" exceeds available stock`);
         return;
       }
     }
 
-    const body = {
-      customer_name: customer_name.trim(),
-      customer_phone: customer_phone.trim(),
-      company_id: user.company_id,
-      products: lines.map((l) => ({
-        product_id: l.product.id,
-        qty: l.qty,
-      })),
-      sub_total: totals.sub_total,
-      gst_total: totals.gst_total,
-      total_amount: totals.total_amount,
-      paid_amount: totals.total_amount,
-      balance_amount: 0,
-      payment_method: 'cash',
-    };
-    const res = await apiFetch<{ status: boolean; message?: string; invoice_no?: string }>(
-      'invoice/create_invoice.php',
-      { body, token }
-    );
-    if (res.status) {
-      Alert.alert('Success', `Invoice ${res.invoice_no ?? ''} created`);
-      setLines([]);
-      setCustomerName('');
-      setCustomerPhone('');
-      loadProducts();
-    } else {
-      Alert.alert('Error', res.message ?? 'Failed');
+    setIsSubmitting(true);
+    try {
+      // Step 1: Save or get customer ID
+      const customer_id = await saveOrGetCustomer();
+
+      if (!customer_id) {
+        throw new Error("Customer registration failed. Cannot create invoice without a valid customer ID.");
+      }
+
+      // Step 2: Build products array with details matching web app
+      const productsArray = lines.map((l) => ({
+        product_id: Number(l.product.id),
+        name: l.product.product_name,
+        price: Number(l.product.price),
+        gst: Number(l.product.gst_percentage),
+        qty: Number(l.qty),
+      }));
+
+      // Step 3: Payment logic
+      let paid_amount_val = 0;
+      let balance_amount_val = 0;
+      let payment_status_val = 'paid';
+
+      if (paymentMethod === 'credit') {
+        paid_amount_val = 0;
+        balance_amount_val = totals.total_amount;
+        payment_status_val = 'pending';  // Changed from 'not_paid' to 'pending'
+      } else {
+        const received = parseFloat(paid_amount) || 0;
+        paid_amount_val = Math.min(received, totals.total_amount);
+        balance_amount_val = Math.max(0, totals.total_amount - paid_amount_val);
+        payment_status_val = balance_amount_val > 0 ? 'partial' : 'paid';
+      }
+
+      // Step 4: Build final JSON body
+      const cleanPhone = customer_phone.replace(/\D/g, '').slice(-10);
+      
+      const invoicePayload = {
+        customer_id: Number(customer_id),
+        customer_name: customer_name.trim(),
+        customer_phone: cleanPhone,
+        products: productsArray,  // Send as array
+        sub_total: Number(totals.sub_total),
+        gst_total: Number(totals.gst_total),
+        total_amount: Number(totals.total_amount),
+        gst_type: billType === 'gst_bill' ? 'with_gst' : 'without_gst',
+        gst_no: billType === 'gst_bill' ? customer_gst_no.trim() : "",
+        payment_method: paymentMethod,
+        payment_status: payment_status_val,
+        paid_amount: Number(paid_amount_val),
+        balance_amount: Number(balance_amount_val),
+        payment_type: paymentMethod === 'credit' ? 'credit' : 'cash',
+        company_id: Number(user.company_id),
+      };
+
+      console.log("Invoice Payload:", invoicePayload);
+
+      const res = await apiFetch<{ status: boolean; message?: string; invoice_no?: string }>(
+        'invoice/create_invoice.php',
+        { 
+          method: 'POST',
+          body: invoicePayload,
+          token,
+        }
+      );
+
+      console.log('=== API RESPONSE ===', res);
+
+      if (res.status) {
+        const invoiceNo = res.invoice_no ?? 'Unknown';
+
+        // Refresh products/stock immediately
+        loadProducts();
+
+        Alert.alert('Success', `Invoice ${invoiceNo} created`, [
+          {
+            text: 'View Invoice',
+            onPress: () => {
+              // Navigate to InvoiceDetail screen via parent if needed (matching InvoicesScreen logic)
+              const parent = navigation.getParent();
+              if (parent) {
+                (parent as any).navigate('InvoiceDetail', {
+                  invoice_no: invoiceNo,
+                });
+              } else {
+                (navigation as any).navigate('InvoiceDetail', {
+                  invoice_no: invoiceNo,
+                });
+              }
+
+              // Reset form
+              resetForm();
+            },
+          },
+          {
+            text: 'Create Another',
+            onPress: () => {
+              resetForm();
+            },
+          },
+        ]);
+      } else {
+        Alert.alert('Error', res.message ?? 'Failed to create invoice');
+      }
+    } catch (error) {
+      console.error('Invoice creation error:', error);
+      Alert.alert('Error', error instanceof Error ? error.message : 'An unexpected error occurred');
+    } finally {
+      setIsSubmitting(false);
     }
+  };
+
+  const resetForm = () => {
+    setLines([]);
+    setCustomerName('');
+    setCustomerPhone('');
+    setCustomerGstNo('');
+    setPaidAmount('');
+    setBillType('cash_bill');
+    setPaymentMethod('cash');
+    setSelectedProducts({});
   };
 
   return (
@@ -272,16 +414,46 @@ export default function BillingScreen() {
             keyboardType="number-pad"
             maxLength={10}
           />
+
+          <Text style={styles.section}>Bill Type</Text>
+          <View style={styles.billTypeContainer}>
+            <TouchableOpacity
+              style={[styles.billTypeBtn, billType === 'cash_bill' && styles.billTypeBtnActive]}
+              onPress={() => setBillType('cash_bill')}
+            >
+              <Text style={[styles.billTypeText, billType === 'cash_bill' && styles.billTypeTextActive]}>Cash Bill</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.billTypeBtn, billType === 'gst_bill' && styles.billTypeBtnActive]}
+              onPress={() => setBillType('gst_bill')}
+            >
+              <Text style={[styles.billTypeText, billType === 'gst_bill' && styles.billTypeTextActive]}>GST Bill</Text>
+            </TouchableOpacity>
+          </View>
+
+          {billType === 'gst_bill' && (
+            <>
+              <Text style={styles.label}>GST Number</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="GST Number"
+                placeholderTextColor={colors.subtle}
+                value={customer_gst_no}
+                onChangeText={setCustomerGstNo}
+                maxLength={15}
+              />
+            </>
+          )}
         </AppCard>
 
-        <AppButton 
-          title="Add product line" 
-          variant="secondary" 
+        <AppButton
+          title="Add product line"
+          variant="secondary"
           onPress={() => {
             setSearchQuery('');
             setSelectedProducts({});
             setPicker(true);
-          }} 
+          }}
         />
 
         {lines.length > 0 ? (
@@ -291,19 +463,19 @@ export default function BillingScreen() {
               <View key={l.product.id} style={styles.line}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.lineName}>{l.product.product_name}</Text>
-                  
+
                   <View style={styles.cartQtyRow}>
                     <Text style={styles.cartQtyLabel}>Qty</Text>
                     <View style={styles.cartQtyControls}>
-                      <TouchableOpacity 
-                        style={styles.cartQtyBtn} 
+                      <TouchableOpacity
+                        style={styles.cartQtyBtn}
                         onPress={() => updateCartQty(l.product.id, -1)}
                       >
                         <Minus size={14} color={colors.primary} />
                       </TouchableOpacity>
                       <Text style={styles.cartQtyValue}>{l.qty}</Text>
-                      <TouchableOpacity 
-                        style={[styles.cartQtyBtn, getRemainingStock(l.product.id) <= 0 && { opacity: 0.5 }]} 
+                      <TouchableOpacity
+                        style={[styles.cartQtyBtn, getRemainingStock(l.product.id) <= 0 && { opacity: 0.5 }]}
                         onPress={() => updateCartQty(l.product.id, 1)}
                         disabled={getRemainingStock(l.product.id) <= 0}
                       >
@@ -327,16 +499,64 @@ export default function BillingScreen() {
           </AppCard>
         ) : null}
 
+        <AppCard style={{ marginTop: space.lg }}>
+          <Text style={styles.section}>Payment Method</Text>
+          <View style={styles.paymentContainer}>
+            {['cash', 'online', 'upi', 'credit'].map((method) => (
+              <TouchableOpacity
+                key={method}
+                style={[styles.paymentBtn, paymentMethod === method && styles.paymentBtnActive]}
+                onPress={() => setPaymentMethod(method as any)}
+              >
+                <Text style={[styles.paymentText, paymentMethod === method && styles.paymentTextActive]}>
+                  {method.charAt(0).toUpperCase() + method.slice(1)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {paymentMethod !== 'credit' && (
+            <>
+              <Text style={styles.label}>Amount Received</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="0.00"
+                placeholderTextColor={colors.subtle}
+                value={paid_amount}
+                onChangeText={setPaidAmount}
+                keyboardType="numeric"
+              />
+              <Text style={styles.balanceText}>
+                {parseFloat(paid_amount) >= totals.total_amount
+                  ? `Change Return: ₹${(parseFloat(paid_amount) - totals.total_amount).toFixed(2)}`
+                  : `Balance Due: ₹${(totals.total_amount - parseFloat(paid_amount || '0')).toFixed(2)}`}
+              </Text>
+            </>
+          )}
+
+          {paymentMethod === 'credit' && (
+            <View style={styles.creditBanner}>
+              <Text style={styles.creditText}>Due in 30 days, Full amount recorded as outstanding</Text>
+            </View>
+          )}
+        </AppCard>
+
         <LinearGradient
           colors={[colors.successSoft, '#FFFFFF']}
           style={[styles.totalsCard, shadows.card]}
         >
           <Text style={styles.t}>Subtotal · ₹{totals.sub_total.toFixed(2)}</Text>
-          <Text style={styles.t}>GST · ₹{totals.gst_total.toFixed(2)}</Text>
+          {billType === 'gst_bill' && <Text style={styles.t}>GST · ₹{totals.gst_total.toFixed(2)}</Text>}
           <Text style={styles.total}>Total · ₹{totals.total_amount.toFixed(2)}</Text>
         </LinearGradient>
 
-        <AppButton title="Create invoice" variant="primary" onPress={submit} style={{ marginTop: space.lg }} />
+        <AppButton
+          title="Create invoice"
+          variant="primary"
+          onPress={submit}
+          style={{ marginTop: space.lg }}
+          loading={isSubmitting}
+        />
       </ScrollView>
 
       <Modal visible={picker} animationType="slide" presentationStyle="pageSheet">
@@ -487,6 +707,73 @@ const styles = StyleSheet.create({
     ...typography.micro,
     color: colors.muted,
     marginTop: 6,
+  },
+  billTypeContainer: {
+    flexDirection: 'row',
+    gap: space.md,
+    marginBottom: space.md,
+  },
+  billTypeBtn: {
+    flex: 1,
+    paddingVertical: space.md,
+    paddingHorizontal: space.lg,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceMuted,
+  },
+  billTypeBtnActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  billTypeText: {
+    ...typography.body,
+    textAlign: 'center',
+    color: colors.text,
+  },
+  billTypeTextActive: {
+    color: '#FFFFFF',
+  },
+  paymentContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.sm,
+    marginBottom: space.md,
+  },
+  paymentBtn: {
+    paddingVertical: space.sm,
+    paddingHorizontal: space.md,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceMuted,
+  },
+  paymentBtnActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  paymentText: {
+    ...typography.caption,
+    color: colors.text,
+  },
+  paymentTextActive: {
+    color: '#FFFFFF',
+  },
+  balanceText: {
+    ...typography.caption,
+    color: colors.muted,
+    marginTop: 4,
+  },
+  creditBanner: {
+    backgroundColor: colors.errorSoft,
+    padding: space.md,
+    borderRadius: radii.md,
+    marginTop: space.sm,
+  },
+  creditText: {
+    ...typography.caption,
+    color: colors.error,
+    textAlign: 'center',
   },
   totalsCard: {
     marginTop: space.lg,

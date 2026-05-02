@@ -30,19 +30,26 @@ function withQuery(
   return `${path}${path.includes('?') ? '&' : '?'}${queryString}`;
 }
 
+let apiToken: string | null = null;
+
+export function setApiToken(token: string | null) {
+  apiToken = token;
+}
+
 export async function apiFetch<T>(path: string, options: FetchOptions = {}): Promise<T> {
-  const { method = 'POST', body, query, token } = options;
+  const { method = 'POST', body, query, token: manualToken } = options;
   const headers: Record<string, string> = { Accept: 'application/json' };
-  if (method !== 'GET') {
-    headers['Content-Type'] = 'application/json';
-  }
+  
+  const token = manualToken || apiToken;
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
 
   const endpoint = withQuery(path, query);
   const init: RequestInit = { method, headers };
+
   if (method !== 'GET' && body !== undefined) {
+    headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(body);
   }
 

@@ -82,20 +82,25 @@ export default function CustomersScreen() {
     }
 
     setSaveBusy(true);
-    const body = {
-      company_id: user.company_id,
+    const payload: any = {
+      company_id: Number(user.company_id),
       name: name.trim(),
-      phone,
-      address,
-      type,
-      credit_enabled: parseInt(creditEnabled, 10),
-      credit_limit: parseInt(creditEnabled, 10) === 1 ? creditLimit : 0,
+      phone: phone.trim(),
+      gst_no: "", // Standardized field
+      address: address,
+      type: type,
+      credit_enabled: Number(creditEnabled),
+      credit_limit: Number(creditEnabled) === 1 ? Number(creditLimit) : 0,
     };
+
+    console.log("FINAL CUSTOMER PAYLOAD:", JSON.stringify(payload, null, 2));
 
     try {
       if (editing) {
+        payload.id = editing.id;
         const res = await apiFetch<{ status: boolean; message?: string }>('customer/update.php', {
-          body: { ...body, id: editing.id },
+          method: 'POST',
+          body: payload,
           token,
         });
         if (res.status) {
@@ -106,7 +111,8 @@ export default function CustomersScreen() {
         }
       } else {
         const res = await apiFetch<{ status: boolean; message?: string }>('customer/create_customer.php', {
-          body,
+          method: 'POST',
+          body: payload,
           token,
         });
         if (res.status) {

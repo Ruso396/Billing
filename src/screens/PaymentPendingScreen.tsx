@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, FlatList, StyleSheet, RefreshControl, TouchableOpacity, Alert, Linking } from 'react-native';
+import { View, FlatList, StyleSheet, RefreshControl, TouchableOpacity, Alert, Linking, Text } from 'react-native';
 import { AlertTriangle } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../services/api';
@@ -28,6 +28,7 @@ export default function PaymentPendingScreen() {
     }
     try {
       const res = await apiFetch<{ status: boolean; data?: PendingInvoice[] }>('invoice/get_pending_invoice.php', {
+        method: 'POST',
         body: { company_id: user.company_id },
         token,
       });
@@ -53,6 +54,7 @@ export default function PaymentPendingScreen() {
         onPress: async () => {
           try {
             const res = await apiFetch<{ status: boolean; message?: string }>('invoice/mark_as_paid.php', {
+              method: 'POST',
               body: { invoice_no },
               token,
             });

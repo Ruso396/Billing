@@ -81,12 +81,11 @@ export default function ProductsScreen() {
   }, [load]);
 
   const selectedCategoryLabel = () => {
-    const id = parseInt(categoryId, 10);
-    if (!id) {
+    if (!categoryId) {
       return 'Select category';
     }
-    const c = categories.find((x) => x.id === id);
-    return c ? c.name : `Category #${id}`;
+    const c = categories.find((x) => String(x.id) === String(categoryId));
+    return c ? c.name : `Category #${categoryId}`;
   };
 
   const openAdd = async () => {
@@ -332,7 +331,7 @@ export default function ProductsScreen() {
                   }}
                 >
                   <Text style={styles.pickerItemText}>{item.name}</Text>
-                  {parseInt(categoryId, 10) === item.id ? (
+                  {String(categoryId) === String(item.id) ? (
                     <Text style={styles.pickerCheck}>✓</Text>
                   ) : null}
                 </TouchableOpacity>
