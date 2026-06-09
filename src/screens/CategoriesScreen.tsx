@@ -10,18 +10,21 @@ import {
   Alert,
   Pressable,
 } from 'react-native';
-import { FolderTree, Pencil, Archive } from 'lucide-react-native';
+import { FolderTree, Pencil } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../services/api';
-import { Screen, ScreenHeader, AppButton, AppInput, AppCard, EmptyState } from '../components/ui';
+import { Screen, ScreenHeader, AppButton, AppInput, AppCard, EmptyState, StatusToggle } from '../components/ui';
+import { useStatusToggle } from '../hooks/useStatusToggle';
 import { colors, radii, space, typography, TAB_BAR_CONTENT_INSET, shadows } from '../theme/tokens';
+import { isActiveStatus, statusFromEnabled } from '../utils/status';
 
-type Cat = { id: number; name: string };
+type Cat = { id: number; name: string; status?: string };
 
 export default function CategoriesScreen() {
   const { token, user } = useAuth();
   const [items, setItems] = useState<Cat[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const { isPending, toggleStatus } = useStatusToggle(setItems);
   const [modal, setModal] = useState(false);
   const [name, setName] = useState('');
   const [editing, setEditing] = useState<Cat | null>(null);
@@ -74,26 +77,14 @@ export default function CategoriesScreen() {
     }
   };
 
-  const remove = (c: Cat) => {
-    Alert.alert('Archive category', c.name, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Archive',
-        style: 'destructive',
-        onPress: async () => {
-          if (!token) {
-            return;
-          }
-          const res = await apiFetch('category/delete.php', {
-            body: { id: c.id },
-            token,
-          });
-          if ((res as { status: boolean }).status) {
-            load();
-          }
-        },
-      },
-    ]);
+  const toggleCategory = (c: Cat, enabled: boolean) => {
+    if (!token) return;
+    void toggleStatus(c, enabled, () =>
+      apiFetch<{ success: boolean; message?: string }>('category/toggle_category_status.php', {
+        body: { id: c.id, status: statusFromEnabled(enabled) },
+        token,
+      }),
+    );
   };
 
   return (
@@ -123,29 +114,34 @@ export default function CategoriesScreen() {
           />
         }
         contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: TAB_BAR_CONTENT_INSET + 16 }}
-        renderItem={({ item }) => (
-          <AppCard style={styles.listCard}>
-            <View style={styles.row}>
-              <View style={styles.iconWrap}>
-                <FolderTree size={20} color={colors.primary} />
+        renderItem={({ item }) => {
+          const isActive = isActiveStatus(item.status);
+          return (
+            <AppCard style={[styles.listCard, !isActive && styles.inactive]}>
+              <View style={styles.row}>
+                <View style={styles.iconWrap}>
+                  <FolderTree size={20} color={colors.primary} />
+                </View>
+                <Text style={styles.name}>{item.name}</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    setEditing(item);
+                    setName(item.name);
+                    setModal(true);
+                  }}
+                  style={styles.iconBtn}
+                >
+                  <Pencil size={18} color={colors.primary} />
+                </TouchableOpacity>
+                <StatusToggle
+                  value={isActive}
+                  disabled={isPending(item.id)}
+                  onValueChange={(v) => toggleCategory(item, v)}
+                />
               </View>
-              <Text style={styles.name}>{item.name}</Text>
-              <TouchableOpacity onPress={() => remove(item)} style={styles.iconBtn}>
-                <Archive size={18} color={colors.error} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => {
-                  setEditing(item);
-                  setName(item.name);
-                  setModal(true);
-                }}
-                style={styles.iconBtn}
-              >
-                <Pencil size={18} color={colors.primary} />
-              </TouchableOpacity>
-            </View>
-          </AppCard>
-        )}
+            </AppCard>
+          );
+        }}
         ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
         ListEmptyComponent={
           <EmptyState
@@ -175,6 +171,7 @@ export default function CategoriesScreen() {
 const styles = StyleSheet.create({
   actions: { paddingHorizontal: space.xl, marginBottom: space.md },
   listCard: { paddingVertical: 14, paddingHorizontal: space.md },
+  inactive: { opacity: 0.65 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   iconWrap: {
     width: 40,

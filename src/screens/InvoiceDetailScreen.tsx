@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform } from 'react-native';
 import { useRoute } from '@react-navigation/native';
-import { Download, FileText, Image as ImageIcon, MessageCircle } from 'lucide-react-native';
+import { FileText } from 'lucide-react-native';
+import { InvoiceDownloadIcon, InvoiceWhatsAppIcon } from '../components/InvoiceActionIcons';
+import { colors, radii, shadows, space, typography } from '../theme/tokens';
 import { Image, Linking } from 'react-native';
 import { API_BASE_URL } from '../config/api';
 import { useAuth } from '../context/AuthContext';
@@ -367,15 +369,32 @@ export default function InvoiceDetailScreen() {
             </Text>
           </View>
 
-          <TouchableOpacity style={styles.downloadBtn} onPress={generatePDF} disabled={isGenerating}>
-            <Download size={20} color="#fff" />
-            <Text style={styles.downloadBtnText}>{isGenerating ? 'Processing...' : 'Download Invoice'}</Text>
-          </TouchableOpacity>
+          <View style={styles.actionsRow}>
+            <TouchableOpacity
+              style={styles.actionItem}
+              onPress={generatePDF}
+              disabled={isGenerating}
+              activeOpacity={0.75}
+            >
+              <View style={[styles.actionIconWrap, styles.downloadIconWrap]}>
+                <InvoiceDownloadIcon size={30} />
+              </View>
+              <Text style={styles.actionLabel}>{isGenerating ? 'Processing' : 'Download'}</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity style={styles.whatsappBtn} onPress={sendWhatsAppMessage}>
-            <MessageCircle size={20} color="#fff" />
-            <Text style={styles.whatsappBtnText}>Send via WhatsApp</Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionItem}
+              onPress={sendWhatsAppMessage}
+              activeOpacity={0.75}
+            >
+              <View style={[styles.actionIconWrap, styles.whatsappIconWrap]}>
+                <View style={styles.whatsappIconSlot}>
+                  <InvoiceWhatsAppIcon size={30} />
+                </View>
+              </View>
+              <Text style={styles.actionLabel}>WhatsApp</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
     </Screen>
@@ -523,39 +542,50 @@ const styles = StyleSheet.create({
     marginTop: 4,
     color: '#000',
   },
-  downloadBtn: {
+  actionsRow: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#000',
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-    marginTop: 24,
+    alignItems: 'flex-start',
+    gap: 40,
+    marginTop: space.xl,
+    paddingTop: space.md,
     width: '100%',
   },
-  whatsappBtn: {
-    flexDirection: 'row',
+  actionItem: {
+    alignItems: 'center',
+    minWidth: 88,
+  },
+  actionIconWrap: {
+    width: 58,
+    height: 58,
+    borderRadius: radii.lg,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#25D366', // Green
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-    marginTop: 12,
-    width: '100%',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    ...shadows.card,
   },
-  downloadBtnText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginLeft: 8,
+  downloadIconWrap: {
+    backgroundColor: '#F0F7FF',
   },
-  whatsappBtnText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginLeft: 8,
+  whatsappIconWrap: {
+    backgroundColor: '#F0FAF0',
+    borderColor: '#D8F0D8',
+  },
+  whatsappIconSlot: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  actionLabel: {
+    ...typography.caption,
+    marginTop: 8,
+    color: colors.textSecondary,
+    fontWeight: '700',
+    textAlign: 'center',
   },
 });
 

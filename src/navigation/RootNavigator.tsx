@@ -22,6 +22,7 @@ import RegisterScreen from '../screens/RegisterScreen';
 import RegisterCompanyScreen from '../screens/RegisterCompanyScreen';
 import ForgotPasswordScreen from '../screens/ForgotPasswordScreen';
 import PaymentPendingScreen from '../screens/PaymentPendingScreen';
+import CashierRequestsScreen from '../screens/CashierRequestsScreen';
 import CreditSettingsScreen from '../screens/CreditSettingsScreen';
 import TaxSettingsScreen from '../screens/TaxSettingsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
@@ -70,6 +71,7 @@ function MoreNavigator() {
       <MoreStack.Screen name="MoreMenu" component={MoreMenuScreen} />
       <MoreStack.Screen name="Reports" component={ReportsScreen} />
       <MoreStack.Screen name="PaymentPending" component={PaymentPendingScreen} />
+      <MoreStack.Screen name="CashierRequests" component={CashierRequestsScreen} />
       <MoreStack.Screen name="CreditSettings" component={CreditSettingsScreen} />
       <MoreStack.Screen name="TaxSettings" component={TaxSettingsScreen} />
       <MoreStack.Screen name="Settings" component={SettingsScreen} />

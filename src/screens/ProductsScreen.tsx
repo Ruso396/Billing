@@ -12,20 +12,24 @@ import {
   ActivityIndicator,
   Pressable,
 } from 'react-native';
-import { ChevronDown, Package, Pencil, Archive } from 'lucide-react-native';
+import { ChevronDown, Package, Pencil } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../services/api';
-import { Screen, ScreenHeader, AppButton, AppInput, AppCard, EmptyState } from '../components/ui';
+import { Screen, ScreenHeader, AppButton, AppInput, AppCard, EmptyState, StatusToggle } from '../components/ui';
+import { useStatusToggle } from '../hooks/useStatusToggle';
 import { colors, radii, space, typography, TAB_BAR_CONTENT_INSET, shadows } from '../theme/tokens';
+import { isActiveStatus, statusFromEnabled } from '../utils/status';
 
 type Product = {
   id: number;
   category_id: number;
   product_name: string;
+  product_code?: string;
   price: string;
   stock: string;
   category_name: string;
   gst_percentage: string;
+  status?: string;
 };
 
 type Category = { id: number; name: string };
@@ -34,10 +38,12 @@ export default function ProductsScreen() {
   const { token, user } = useAuth();
   const [items, setItems] = useState<Product[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const { isPending, toggleStatus } = useStatusToggle(setItems);
   const [modal, setModal] = useState(false);
   const [categoryPicker, setCategoryPicker] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [name, setName] = useState('');
+  const [productCode, setProductCode] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [price, setPrice] = useState('');
   const [stock, setStock] = useState('');
@@ -64,7 +70,7 @@ export default function ProductsScreen() {
     if (!token || !user?.company_id) {
       return [];
     }
-    const res = await apiFetch<{ status: boolean; data?: Category[] }>('category/get_all.php', {
+    const res = await apiFetch<{ status: boolean; data?: Category[] }>('category/get_active_category.php', {
       method: 'GET',
       token,
       query: { company_id: user.company_id },
@@ -95,6 +101,7 @@ export default function ProductsScreen() {
     }
     setEditing(null);
     setName('');
+    setProductCode('');
     setCategoryId('');
     setPrice('');
     setStock('');
@@ -119,6 +126,7 @@ export default function ProductsScreen() {
     }
     setEditing(p);
     setName(p.product_name);
+    setProductCode(p.product_code || '');
     setCategoryId(String(p.category_id ?? ''));
     setPrice(String(p.price));
     setStock(String(p.stock));
@@ -145,11 +153,12 @@ export default function ProductsScreen() {
     }
     const body = {
       product_name: name.trim(),
+      product_code: productCode.trim(),
       category_id: cid,
-      company_id: user?.company_id,
+      company_id: Number(user?.company_id),
       price: parseFloat(price) || 0,
-      stock: parseFloat(stock) || 0,
-      barcode: '',
+      stock: Math.max(0, Math.floor(parseFloat(stock) || 0)),
+      barcode: productCode.trim(),
       unit: 'piece',
       gst_percentage: parseFloat(gst) || 0,
     };
@@ -180,39 +189,20 @@ export default function ProductsScreen() {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      Alert.alert('Request failed', msg);
+      Alert.alert('Could not save product', msg);
     } finally {
       setSaveBusy(false);
     }
   };
 
-  const deleteProduct = (p: Product) => {
-    Alert.alert('Archive product', p.product_name, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Archive',
-        style: 'destructive',
-        onPress: async () => {
-          if (!token) {
-            return;
-          }
-          try {
-            const res = await apiFetch<{ status: boolean; message?: string }>('product/delete.php', {
-              body: { id: p.id },
-              token,
-            });
-            if (res.status) {
-              await load();
-            } else {
-              Alert.alert('Error', res.message ?? 'Archive failed');
-            }
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            Alert.alert('Request failed', msg);
-          }
-        },
-      },
-    ]);
+  const toggleProduct = (p: Product, enabled: boolean) => {
+    if (!token) return;
+    void toggleStatus(p, enabled, () =>
+      apiFetch<{ success: boolean; message?: string }>('product/toggle_status_product.php', {
+        body: { id: p.id, status: statusFromEnabled(enabled) },
+        token,
+      }),
+    );
   };
 
   return (
@@ -235,31 +225,38 @@ export default function ProductsScreen() {
           />
         }
         contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: TAB_BAR_CONTENT_INSET + 16 }}
-        renderItem={({ item }) => (
-          <AppCard style={styles.card}>
-            <View style={styles.rowTop}>
-              <View style={styles.iconWrap}>
-                <Package size={20} color={colors.primary} />
+        renderItem={({ item }) => {
+          const isActive = isActiveStatus(item.status);
+          return (
+            <AppCard style={[styles.card, !isActive && styles.cardInactive]}>
+              <View style={styles.rowTop}>
+                <View style={styles.iconWrap}>
+                  <Package size={20} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.name}>{item.product_name}</Text>
+                  <Text style={styles.code}>Code: {item.product_code || '—'}</Text>
+                  <Text style={styles.meta}>
+                    {item.category_name} · ₹{item.price} · stock {item.stock}
+                  </Text>
+                </View>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.name}>{item.product_name}</Text>
-                <Text style={styles.meta}>
-                  {item.category_name} · ₹{item.price} · stock {item.stock}
-                </Text>
+              <View style={styles.actionsRow}>
+                <TouchableOpacity onPress={() => openEdit(item)} style={styles.textBtn}>
+                  <Pencil size={16} color={colors.primary} />
+                  <Text style={styles.link}>Edit</Text>
+                </TouchableOpacity>
+                <StatusToggle
+                  value={isActive}
+                  disabled={isPending(item.id)}
+                  onValueChange={(v) => toggleProduct(item, v)}
+                  activeLabel="Active"
+                  inactiveLabel="Inactive"
+                />
               </View>
-            </View>
-            <View style={styles.actionsRow}>
-              <TouchableOpacity onPress={() => openEdit(item)} style={styles.textBtn}>
-                <Pencil size={16} color={colors.primary} />
-                <Text style={styles.link}>Edit</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => deleteProduct(item)} style={styles.textBtn}>
-                <Archive size={16} color={colors.error} />
-                <Text style={styles.danger}>Archive</Text>
-              </TouchableOpacity>
-            </View>
-          </AppCard>
-        )}
+            </AppCard>
+          );
+        }}
         ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
         ListEmptyComponent={
           <EmptyState
@@ -279,6 +276,7 @@ export default function ProductsScreen() {
               <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
                 <Text style={styles.modalTitle}>{editing ? 'Edit product' : 'New product'}</Text>
                 <AppInput placeholder="Product name" value={name} onChangeText={setName} />
+                <AppInput placeholder="Product code" value={productCode} onChangeText={setProductCode} autoCapitalize="characters" />
                 <Text style={styles.fieldLabel}>Category</Text>
                 <TouchableOpacity
                   style={styles.selectRow}
@@ -351,6 +349,7 @@ export default function ProductsScreen() {
 const styles = StyleSheet.create({
   actions: { paddingHorizontal: space.xl, marginBottom: space.md },
   card: { padding: space.lg },
+  cardInactive: { opacity: 0.65 },
   rowTop: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
   iconWrap: {
     width: 44,
@@ -361,11 +360,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   name: { ...typography.body, fontWeight: '800' },
+  code: { ...typography.caption, color: colors.primary, marginTop: 2, fontWeight: '700' },
   meta: { ...typography.caption, color: colors.muted, marginTop: 4 },
-  actionsRow: { flexDirection: 'row', gap: 20, marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.borderLight },
+  actionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+  },
   textBtn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   link: { color: colors.primary, fontWeight: '700', fontSize: 14 },
-  danger: { color: colors.error, fontWeight: '700', fontSize: 14 },
   modalBg: {
     flex: 1,
     backgroundColor: colors.overlay,

@@ -66,7 +66,13 @@ export async function apiFetch<T>(path: string, options: FetchOptions = {}): Pro
   try {
     json = text ? JSON.parse(text) : {};
   } catch {
-    throw new Error(`Invalid JSON from ${path}: ${text.slice(0, 200)}`);
+    const isHtml = /<\s*(!DOCTYPE|html|br\s*\/?|table)/i.test(text);
+    if (isHtml) {
+      throw new Error(
+        `Server error on ${path}. The API returned an HTML error page instead of JSON. Check that the PHP file has no syntax errors on the server.`
+      );
+    }
+    throw new Error(`Invalid response from ${path}. Please try again.`);
   }
   return json as T;
 }

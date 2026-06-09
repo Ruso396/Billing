@@ -23,10 +23,13 @@ import { colors, radii, space, typography, TAB_BAR_CONTENT_INSET, shadows } from
 type Product = {
   id: number;
   product_name: string;
+  product_code?: string;
+  barcode?: string;
   price: string;
   stock: string;
   gst_percentage: string;
   unit?: string;
+  status?: string;
 };
 
 type Line = { product: Product; qty: number };
@@ -40,7 +43,7 @@ export default function BillingScreen() {
   const [customer_phone, setCustomerPhone] = useState('');
   const [customer_gst_no, setCustomerGstNo] = useState('');
   const [billType, setBillType] = useState<'cash_bill' | 'gst_bill'>('cash_bill');
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'online' | 'upi' | 'credit'>('cash');
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'upi' | 'card' | 'credit'>('cash');
   const [paid_amount, setPaidAmount] = useState('');
   const [picker, setPicker] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -57,7 +60,7 @@ export default function BillingScreen() {
       query: { company_id: user.company_id },
     });
     if (res.status && res.data) {
-      setProducts(res.data);
+      setProducts(res.data.filter((p) => (p.status || 'active') === 'active'));
     }
   }, [token, user?.company_id]);
 
@@ -116,8 +119,13 @@ export default function BillingScreen() {
 
   const filteredProducts = useMemo(() => {
     if (!searchQuery.trim()) return products;
-    const lower = searchQuery.toLowerCase();
-    return products.filter((p) => p.product_name.toLowerCase().includes(lower));
+    const lower = searchQuery.toLowerCase().trim();
+    return products.filter((p) => {
+      const name = p.product_name.toLowerCase();
+      const code = (p.product_code || '').toLowerCase();
+      const barcode = (p.barcode || '').toLowerCase();
+      return name.includes(lower) || code.includes(lower) || barcode.includes(lower) || code === lower;
+    });
   }, [products, searchQuery]);
 
   const toggleSelectProduct = (p: Product) => {
@@ -314,7 +322,8 @@ export default function BillingScreen() {
         payment_status: payment_status_val,
         paid_amount: Number(paid_amount_val),
         balance_amount: Number(balance_amount_val),
-        payment_type: paymentMethod === 'credit' ? 'credit' : 'cash',
+        payment_type: paymentMethod === 'credit' ? 'credit' : paymentMethod,
+        cashier_id: Number(user.id),
         company_id: Number(user.company_id),
       };
 
@@ -502,7 +511,7 @@ export default function BillingScreen() {
         <AppCard style={{ marginTop: space.lg }}>
           <Text style={styles.section}>Payment Method</Text>
           <View style={styles.paymentContainer}>
-            {['cash', 'online', 'upi', 'credit'].map((method) => (
+            {(['cash', 'upi', 'card', 'credit'] as const).map((method) => (
               <TouchableOpacity
                 key={method}
                 style={[styles.paymentBtn, paymentMethod === method && styles.paymentBtnActive]}
@@ -573,7 +582,7 @@ export default function BillingScreen() {
               <Search size={20} color={colors.subtle} style={styles.searchIcon} />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Search products..."
+                placeholder="Search by name or product code..."
                 placeholderTextColor={colors.subtle}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
@@ -597,6 +606,7 @@ export default function BillingScreen() {
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.pName}>{item.product_name}</Text>
+                      <Text style={styles.pCode}>{item.product_code ? `Code ${item.product_code}` : 'No code'}</Text>
                       <Text style={styles.pStock}>Stock {getRemainingStock(item.id) - qty} · ₹{item.price}</Text>
                     </View>
 
@@ -840,6 +850,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   pName: { ...typography.body, fontWeight: '700' },
+  pCode: { ...typography.micro, color: colors.primary, marginTop: 2, fontWeight: '700' },
   pStock: { ...typography.caption, color: colors.muted, marginTop: 2 },
   qtyContainer: {
     flexDirection: 'row',

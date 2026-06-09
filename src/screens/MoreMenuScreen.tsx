@@ -1,14 +1,16 @@
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { BarChart2, ChevronRight, UserCircle, Wallet, Percent, Settings } from 'lucide-react-native';
+import { BarChart2, ChevronRight, UserCircle, Wallet, Percent, Settings, Clock, UserCheck } from 'lucide-react-native';
+import { useAuth } from '../context/AuthContext';
 import { Screen, ScreenHeader, AppCard } from '../components/ui';
 import { colors, radii, space, typography, TAB_BAR_CONTENT_INSET } from '../theme/tokens';
 
-type MoreStackParamList = {
+export type MoreStackParamList = {
   MoreMenu: undefined;
   Reports: undefined;
   PaymentPending: undefined;
+  CashierRequests: undefined;
   CreditSettings: undefined;
   TaxSettings: undefined;
   Settings: undefined;
@@ -19,24 +21,38 @@ type Props = {
   navigation: NativeStackNavigationProp<MoreStackParamList, 'MoreMenu'>;
 };
 
-const rows: { key: keyof MoreStackParamList; title: string; subtitle: string; icon: typeof BarChart2 }[] = [
+const baseRows: {
+  key: keyof MoreStackParamList;
+  title: string;
+  subtitle: string;
+  icon: typeof BarChart2;
+  roles?: ('superadmin' | 'admin' | 'cashier')[];
+}[] = [
   {
     key: 'Reports',
     title: 'Reports',
-    subtitle: 'Monthly sales overview',
+    subtitle: 'Monthly sales and Excel export',
     icon: BarChart2,
   },
   {
     key: 'PaymentPending',
-    title: 'Pending Payments',
-    subtitle: 'View invoices awaiting payment',
-    icon: Wallet,
+    title: 'Pending invoices',
+    subtitle: 'Unpaid and partially paid bills',
+    icon: Clock,
+  },
+  {
+    key: 'CashierRequests',
+    title: 'Cashier requests',
+    subtitle: 'Approve cashiers beyond the 3-user limit',
+    icon: UserCheck,
+    roles: ['superadmin'],
   },
   {
     key: 'CreditSettings',
     title: 'Credit Settings',
-    subtitle: 'Manage customer credit terms',
-    icon: Percent,
+    subtitle: 'Company default credit days',
+    icon: Wallet,
+    roles: ['admin', 'cashier'],
   },
   {
     key: 'TaxSettings',
@@ -59,6 +75,9 @@ const rows: { key: keyof MoreStackParamList; title: string; subtitle: string; ic
 ];
 
 export default function MoreMenuScreen({ navigation }: Props) {
+  const { role } = useAuth();
+  const rows = baseRows.filter((row) => !row.roles || (role && row.roles.includes(role)));
+
   return (
     <Screen edges={['top', 'left', 'right']}>
       <ScreenHeader title="More" subtitle="Tools and account" />

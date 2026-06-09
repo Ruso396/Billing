@@ -6,6 +6,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../services/api';
 import { Screen, ScreenHeader, AppCard, Loader, EmptyState } from '../components/ui';
+import { InvoiceExportPanel } from '../components/InvoiceExportPanel';
+import type { ExportInvoice } from '../utils/invoiceExport';
 import { colors, radii, space, typography, TAB_BAR_CONTENT_INSET, shadows } from '../theme/tokens';
 
 type MoreStackParamList = {
@@ -23,6 +25,7 @@ type MonthRow = { month: string; total: number };
 export default function ReportsScreen({ navigation }: Props) {
   const { token, user } = useAuth();
   const [rows, setRows] = useState<MonthRow[]>([]);
+  const [invoices, setInvoices] = useState<ExportInvoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -31,16 +34,25 @@ export default function ReportsScreen({ navigation }: Props) {
       setLoading(false);
       return;
     }
-    const res = await apiFetch<{
-      status: boolean;
-      data?: { monthly_sales: MonthRow[] };
-    }>('dashboard/get_analytics.php', {
-      method: 'GET',
-      token,
-      query: { company_id: user.company_id },
-    });
-    if (res.status && res.data?.monthly_sales) {
-      setRows(res.data.monthly_sales);
+    const [analyticsRes, invoiceRes] = await Promise.all([
+      apiFetch<{
+        status: boolean;
+        data?: { monthly_sales: MonthRow[] };
+      }>('dashboard/get_analytics.php', {
+        method: 'GET',
+        token,
+        query: { company_id: user.company_id },
+      }),
+      apiFetch<{ status: boolean; data?: ExportInvoice[] }>('invoice/get_all_invoice.php', {
+        body: { company_id: user.company_id },
+        token,
+      }),
+    ]);
+    if (analyticsRes.status && analyticsRes.data?.monthly_sales) {
+      setRows(analyticsRes.data.monthly_sales);
+    }
+    if (invoiceRes.status && invoiceRes.data) {
+      setInvoices(invoiceRes.data);
     }
     setLoading(false);
   }, [token, user?.company_id]);
@@ -94,6 +106,8 @@ export default function ReportsScreen({ navigation }: Props) {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: TAB_BAR_CONTENT_INSET + 32, paddingHorizontal: space.xl }}
       >
+        <InvoiceExportPanel invoices={invoices} />
+
         <LinearGradient
           colors={[...colors.gradientHero]}
           start={{ x: 0, y: 0 }}

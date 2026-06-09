@@ -5,6 +5,7 @@ import { AppCard } from './AppCard';
 import { ScreenHeader } from './ScreenHeader';
 import { EmptyState } from './EmptyState';
 import { Loader } from './Loader';
+import { StatusToggle } from './StatusToggle';
 
 export {
   Screen,
@@ -13,5 +14,6 @@ export {
   AppCard,
   ScreenHeader,
   EmptyState,
-  Loader
+  Loader,
+  StatusToggle,
 };

@@ -5,21 +5,22 @@ import {
   FlatList,
   StyleSheet,
   RefreshControl,
-  TouchableOpacity,
-  Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { Building2, Archive } from 'lucide-react-native';
+import { Building2 } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../services/api';
-import { Screen, ScreenHeader, AppButton, AppCard, EmptyState } from '../components/ui';
+import { Screen, ScreenHeader, AppButton, AppCard, EmptyState, StatusToggle } from '../components/ui';
+import { useStatusToggle } from '../hooks/useStatusToggle';
 import { colors, radii, space, typography, TAB_BAR_CONTENT_INSET } from '../theme/tokens';
+import { isActiveStatus, statusFromEnabled } from '../utils/status';
 
 type Company = {
   id: number;
   company_name: string;
   owner_email: string;
   phone: string;
+  status?: string;
 };
 
 export default function CompaniesScreen() {
@@ -27,6 +28,7 @@ export default function CompaniesScreen() {
   const navigation = useNavigation();
   const [items, setItems] = useState<Company[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const { isPending, toggleStatus } = useStatusToggle(setItems);
 
   const load = useCallback(async () => {
     if (!token) {
@@ -45,28 +47,14 @@ export default function CompaniesScreen() {
     load();
   }, [load]);
 
-  const remove = (c: Company) => {
-    Alert.alert('Archive company', c.company_name, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Archive',
-        style: 'destructive',
-        onPress: async () => {
-          if (!token) {
-            return;
-          }
-          const res = await apiFetch<{ status: boolean; message?: string }>(
-            'company/delete_company.php',
-            { body: { id: c.id }, token }
-          );
-          if (res.status) {
-            load();
-          } else {
-            Alert.alert('Error', res.message ?? '');
-          }
-        },
-      },
-    ]);
+  const toggleCompany = (c: Company, enabled: boolean) => {
+    if (!token) return;
+    void toggleStatus(c, enabled, () =>
+      apiFetch<{ success: boolean; message?: string }>('company/toggle_company_status.php', {
+        body: { id: c.id, company_status: statusFromEnabled(enabled) },
+        token,
+      }),
+    );
   };
 
   return (
@@ -92,22 +80,28 @@ export default function CompaniesScreen() {
           />
         }
         contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: TAB_BAR_CONTENT_INSET + 16 }}
-        renderItem={({ item }) => (
-          <AppCard style={styles.card}>
-            <View style={styles.rowTop}>
-              <View style={styles.iconWrap}>
-                <Building2 size={22} color={colors.primary} />
+        renderItem={({ item }) => {
+          const isActive = isActiveStatus(item.status);
+          return (
+            <AppCard style={[styles.card, !isActive && styles.inactive]}>
+              <View style={styles.rowTop}>
+                <View style={styles.iconWrap}>
+                  <Building2 size={22} color={colors.primary} />
+                </View>
+                <StatusToggle
+                  value={isActive}
+                  disabled={isPending(item.id)}
+                  onValueChange={(v) => toggleCompany(item, v)}
+                  activeLabel="Active"
+                  inactiveLabel="Inactive"
+                />
               </View>
-              <TouchableOpacity onPress={() => remove(item)} style={styles.archive}>
-                <Archive size={18} color={colors.error} />
-                <Text style={styles.archiveTxt}>Archive</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.name}>{item.company_name}</Text>
-            <Text style={styles.meta}>{item.owner_email}</Text>
-            {item.phone ? <Text style={styles.phone}>{item.phone}</Text> : null}
-          </AppCard>
-        )}
+              <Text style={styles.name}>{item.company_name}</Text>
+              <Text style={styles.meta}>{item.owner_email}</Text>
+              {item.phone ? <Text style={styles.phone}>{item.phone}</Text> : null}
+            </AppCard>
+          );
+        }}
         ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
         ListEmptyComponent={
           <EmptyState
@@ -124,6 +118,7 @@ export default function CompaniesScreen() {
 const styles = StyleSheet.create({
   actions: { paddingHorizontal: space.xl, marginBottom: space.md },
   card: { padding: space.lg },
+  inactive: { opacity: 0.65 },
   rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: space.sm },
   iconWrap: {
     width: 44,
@@ -133,8 +128,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  archive: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: 6 },
-  archiveTxt: { ...typography.caption, color: colors.error, fontWeight: '700' },
   name: { ...typography.h2, fontSize: 18 },
   meta: { ...typography.caption, color: colors.muted, marginTop: 4 },
   phone: { ...typography.micro, marginTop: 4 },

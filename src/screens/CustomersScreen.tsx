@@ -3,8 +3,10 @@ import { Alert, FlatList, Modal, Pressable, RefreshControl, ScrollView, StyleShe
 import { Contact } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../services/api';
-import { AppButton, AppCard, AppInput, EmptyState, Screen, ScreenHeader } from '../components/ui';
+import { AppButton, AppCard, AppInput, EmptyState, Screen, ScreenHeader, StatusToggle } from '../components/ui';
+import { useStatusToggle } from '../hooks/useStatusToggle';
 import { TAB_BAR_CONTENT_INSET, colors, radii, space, typography } from '../theme/tokens';
+import { isActiveStatus, statusFromEnabled } from '../utils/status';
 
 type Customer = {
   id: number;
@@ -14,12 +16,23 @@ type Customer = {
   type?: string;
   credit_enabled?: number;
   credit_limit?: string;
+  credit_days?: string | number;
+  pending_amount?: string;
+  status?: string;
 };
+
+function creditBalance(c: Customer): { limit: number; used: number; balance: number } | null {
+  if (!c.credit_enabled) return null;
+  const limit = Number(c.credit_limit) || 0;
+  const used = Number(c.pending_amount) || 0;
+  return { limit, used, balance: Math.max(0, limit - used) };
+}
 
 export default function CustomersScreen() {
   const { token, user } = useAuth();
   const [items, setItems] = useState<Customer[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const { isPending, toggleStatus } = useStatusToggle(setItems);
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState<Customer | null>(null);
   const [name, setName] = useState('');
@@ -28,6 +41,7 @@ export default function CustomersScreen() {
   const [type, setType] = useState('regular');
   const [creditEnabled, setCreditEnabled] = useState('0');
   const [creditLimit, setCreditLimit] = useState('');
+  const [creditDays, setCreditDays] = useState('30');
   const [saveBusy, setSaveBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -56,6 +70,7 @@ export default function CustomersScreen() {
     setType('regular');
     setCreditEnabled('0');
     setCreditLimit('');
+    setCreditDays('30');
     setModal(true);
   };
 
@@ -67,6 +82,7 @@ export default function CustomersScreen() {
     setType(c.type || 'regular');
     setCreditEnabled(String(c.credit_enabled || '0'));
     setCreditLimit(String(c.credit_limit || ''));
+    setCreditDays(String(c.credit_days ?? '30'));
     setModal(true);
   };
 
@@ -82,18 +98,17 @@ export default function CustomersScreen() {
     }
 
     setSaveBusy(true);
-    const payload: any = {
+    const payload: Record<string, unknown> = {
       company_id: Number(user.company_id),
       name: name.trim(),
       phone: phone.trim(),
-      gst_no: "", // Standardized field
+      gst_no: '',
       address: address,
       type: type,
       credit_enabled: Number(creditEnabled),
-      credit_limit: Number(creditEnabled) === 1 ? Number(creditLimit) : 0,
+      credit_limit: Number(creditEnabled) === 1 ? Number(creditLimit) || 0 : 0,
+      credit_days: Number(creditEnabled) === 1 ? Number(creditDays) || 0 : 0,
     };
-
-    console.log("FINAL CUSTOMER PAYLOAD:", JSON.stringify(payload, null, 2));
 
     try {
       if (editing) {
@@ -122,16 +137,26 @@ export default function CustomersScreen() {
           Alert.alert('Error', res.message ?? 'Add failed');
         }
       }
-    } catch (e) {
+    } catch {
       Alert.alert('Error', 'Request failed');
     } finally {
       setSaveBusy(false);
     }
   };
 
+  const toggleCustomer = (c: Customer, enabled: boolean) => {
+    if (!token) return;
+    void toggleStatus(c, enabled, () =>
+      apiFetch<{ success: boolean; message?: string }>('customer/toggle_status_customer.php', {
+        body: { id: c.id, status: statusFromEnabled(enabled) },
+        token,
+      }),
+    );
+  };
+
   return (
     <Screen edges={['top', 'left', 'right']}>
-      <ScreenHeader title="Customers" subtitle="Customer directory" />
+      <ScreenHeader title="Customers" subtitle="Credit limits and balances" />
       <View style={styles.actions}>
         <AppButton title="Add Customer" onPress={openAdd} />
       </View>
@@ -149,66 +174,104 @@ export default function CustomersScreen() {
           />
         }
         contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: TAB_BAR_CONTENT_INSET + 16 }}
-        renderItem={({ item }) => (
-          <AppCard style={styles.card}>
-            <View style={styles.row}>
-              <View style={styles.badge}>
-                <Contact size={18} color={colors.primary} />
+        renderItem={({ item }) => {
+          const credit = creditBalance(item);
+          const isActive = isActiveStatus(item.status);
+          return (
+            <AppCard style={[styles.card, !isActive && styles.inactive]}>
+              <View style={styles.row}>
+                <View style={styles.badge}>
+                  <Contact size={18} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.name}>{item.name}</Text>
+                  <Text style={styles.meta}>{item.phone || 'No phone'}</Text>
+                  {item.address ? <Text style={styles.meta}>{item.address}</Text> : null}
+                  {credit ? (
+                    <View style={styles.creditBox}>
+                      <Text style={styles.creditLine}>Credit limit: ₹{credit.limit.toFixed(2)}</Text>
+                      <Text style={styles.creditLine}>Used: ₹{credit.used.toFixed(2)}</Text>
+                      <Text style={styles.creditBalance}>Balance: ₹{credit.balance.toFixed(2)}</Text>
+                      {item.credit_days ? (
+                        <Text style={styles.creditLine}>Credit days: {item.credit_days}</Text>
+                      ) : null}
+                    </View>
+                  ) : null}
+                </View>
+                <Text style={styles.type}>{item.type || 'regular'}</Text>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.name}>{item.name}</Text>
-                <Text style={styles.meta}>{item.phone || 'No phone'}</Text>
-                {item.address ? <Text style={styles.meta}>{item.address}</Text> : null}
+              <View style={styles.actionsRow}>
+                <TouchableOpacity onPress={() => openEdit(item)} style={styles.textBtn}>
+                  <Text style={styles.link}>Edit</Text>
+                </TouchableOpacity>
+                <StatusToggle
+                  value={isActive}
+                  disabled={isPending(item.id)}
+                  onValueChange={(v) => toggleCustomer(item, v)}
+                />
               </View>
-              <Text style={styles.type}>{item.type || 'regular'}</Text>
-            </View>
-            <View style={styles.actionsRow}>
-              <TouchableOpacity onPress={() => openEdit(item)} style={styles.textBtn}>
-                <Text style={styles.link}>Edit</Text>
-              </TouchableOpacity>
-            </View>
-          </AppCard>
-        )}
+            </AppCard>
+          );
+        }}
         ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
         ListEmptyComponent={
           <EmptyState
             icon={Contact}
             title="No customers yet"
-            description="Customers will appear here after billing entries are created."
+            description="Add customers with individual credit settings."
           />
         }
       />
 
       <Modal visible={modal} animationType="slide" transparent>
         <Pressable style={styles.modalBg} onPress={() => !saveBusy && setModal(false)}>
-          <Pressable style={styles.modalBox} onPress={(e: any) => e.stopPropagation()}>
+          <Pressable style={styles.modalBox} onPress={(e: { stopPropagation: () => void }) => e.stopPropagation()}>
             <Text style={styles.modalTitle}>{editing ? 'Edit customer' : 'New customer'}</Text>
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               <AppInput placeholder="Customer Name" value={name} onChangeText={setName} />
               <AppInput placeholder="Mobile (10 digits)" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
               <AppInput placeholder="Address" value={address} onChangeText={setAddress} />
-              
+
               <Text style={styles.fieldLabel}>Customer Type</Text>
               <View style={styles.pickerRow}>
-                {['regular', 'wholesale', 'retail'].map(t => (
+                {['regular', 'wholesale', 'retail'].map((t) => (
                   <TouchableOpacity key={t} style={[styles.radio, type === t && styles.radioActive]} onPress={() => setType(t)}>
                     <Text style={[styles.radioText, type === t && styles.radioTextActive]}>{t}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
-              <Text style={styles.fieldLabel}>Credit Enabled</Text>
+              <Text style={styles.fieldLabel}>Credit enabled</Text>
               <View style={styles.pickerRow}>
-                <TouchableOpacity style={[styles.radio, creditEnabled === '1' && styles.radioActive]} onPress={() => setCreditEnabled('1')}>
+                <TouchableOpacity
+                  style={[styles.radio, creditEnabled === '1' && styles.radioActive]}
+                  onPress={() => setCreditEnabled('1')}
+                >
                   <Text style={[styles.radioText, creditEnabled === '1' && styles.radioTextActive]}>Yes</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.radio, creditEnabled === '0' && styles.radioActive]} onPress={() => setCreditEnabled('0')}>
+                <TouchableOpacity
+                  style={[styles.radio, creditEnabled === '0' && styles.radioActive]}
+                  onPress={() => setCreditEnabled('0')}
+                >
                   <Text style={[styles.radioText, creditEnabled === '0' && styles.radioTextActive]}>No</Text>
                 </TouchableOpacity>
               </View>
 
               {creditEnabled === '1' && (
-                <AppInput placeholder="Credit Limit" keyboardType="decimal-pad" value={creditLimit} onChangeText={setCreditLimit} />
+                <>
+                  <AppInput
+                    placeholder="Credit limit (₹)"
+                    keyboardType="decimal-pad"
+                    value={creditLimit}
+                    onChangeText={setCreditLimit}
+                  />
+                  <AppInput
+                    placeholder="Credit days"
+                    keyboardType="number-pad"
+                    value={creditDays}
+                    onChangeText={setCreditDays}
+                  />
+                </>
               )}
 
               <View style={styles.modalRow}>
@@ -225,8 +288,9 @@ export default function CustomersScreen() {
 
 const styles = StyleSheet.create({
   card: { padding: space.lg },
+  inactive: { opacity: 0.65 },
   actions: { paddingHorizontal: space.xl, marginBottom: space.md },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  row: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   badge: {
     width: 38,
     height: 38,
@@ -237,16 +301,45 @@ const styles = StyleSheet.create({
   },
   name: { ...typography.body, fontWeight: '700' },
   meta: { ...typography.caption, color: colors.muted, marginTop: 2 },
+  creditBox: {
+    marginTop: 8,
+    padding: 10,
+    borderRadius: radii.md,
+    backgroundColor: colors.primarySoft,
+  },
+  creditLine: { ...typography.caption, color: colors.text },
+  creditBalance: { ...typography.caption, color: colors.primary, fontWeight: '800', marginTop: 4 },
   type: { ...typography.micro, color: colors.primary, textTransform: 'capitalize' },
-  actionsRow: { flexDirection: 'row', gap: 20, marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.borderLight },
+  actionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+  },
   textBtn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   link: { color: colors.primary, fontWeight: '700', fontSize: 14 },
   modalBg: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
-  modalBox: { backgroundColor: colors.surface, borderTopLeftRadius: radii.xxl, borderTopRightRadius: radii.xxl, padding: space.xl, maxHeight: '90%' },
+  modalBox: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radii.xxl,
+    borderTopRightRadius: radii.xxl,
+    padding: space.xl,
+    maxHeight: '90%',
+  },
   modalTitle: { ...typography.h2, marginBottom: space.md },
   fieldLabel: { ...typography.micro, color: colors.textSecondary, marginBottom: 8, marginTop: 4 },
   pickerRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
-  radio: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: radii.pill, borderWidth: 1, borderColor: colors.borderLight, backgroundColor: colors.surfaceMuted },
+  radio: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    backgroundColor: colors.surfaceMuted,
+  },
   radioActive: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
   radioText: { fontSize: 14, color: colors.text, fontWeight: '500', textTransform: 'capitalize' },
   radioTextActive: { color: colors.primary, fontWeight: '700' },
